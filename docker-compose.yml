@@ -1,0 +1,185 @@
+version: '3.7'
+services:
+  app:
+    build: .
+    command: python -u app.py
+    labels:
+      - "traefik.http.routers.site.rule=Host(`kartaca.localhost`)"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/staj_db
+    depends_on:
+      - traefik
+      - db-1
+      - db-2
+      - db-3
+    ports:
+      - "4444:5000"
+    volumes:
+      - .:/app
+    networks:
+      - monitoring
+      
+      
+  db-1:
+    image: mongo:latest
+    restart: always
+    hostname: test_mongodb-1
+    environment:
+        - MONGO_INITDB_DATABASE=staj_db
+        - MONGO_INITDB_ROOT_USERNAME=root
+        - MONGO_INITDB_ROOT_PASSWORD=pass 
+    volumes:
+      - ./init-db.js:/docker-entrypoint-initdb.d/init-db.js:ro
+    ports:
+      - 27017:27017
+  
+  db-2:
+    image: mongo:latest
+    restart: always
+    hostname: test_mongodb-3
+    environment:
+        - MONGO_INITDB_DATABASE=staj_db
+        - MONGO_INITDB_ROOT_USERNAME=root
+        - MONGO_INITDB_ROOT_PASSWORD=pass 
+    volumes:
+      - ./init-db.js:/docker-entrypoint-initdb.d/init-db.js:ro
+    ports:
+      - 27018:27017
+
+  db-3:
+    image: mongo:latest
+    restart: always
+    hostname: test_mongodb-2
+    environment:
+        - MONGO_INITDB_DATABASE=staj_db
+        - MONGO_INITDB_ROOT_USERNAME=root
+        - MONGO_INITDB_ROOT_PASSWORD=pass 
+    volumes:
+      - ./init-db.js:/docker-entrypoint-initdb.d/init-db.js:ro
+    ports:
+      - 27019:27017
+
+  node-exporter: 
+    image: prom/node-exporter:latest 
+    container_name: node-exporter 
+    restart: unless-stopped 
+    volumes: 
+      - /proc:/host/proc:ro 
+      - /sys:/host/sys:ro 
+      - /:/rootfs:ro 
+    command: 
+      - '--path.procfs=/host/proc' 
+      - '--path.rootfs=/rootfs' 
+      - '--path.sysfs=/host/sys' 
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)' 
+    ports: 
+      - 9100:9100 
+    networks: 
+      - monitoring 
+
+  prometheus: 
+    image: prom/prometheus:latest 
+    #user: "501" 
+    #environment: 
+     # - PUID=501 
+     # - PGID=20 
+    container_name: prometheus 
+    restart: unless-stopped 
+    volumes: 
+      - ~/promgrafnode/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml 
+      - ~/promgrafnode/prometheus:/prometheus 
+    command: 
+      - '--config.file=/etc/prometheus/prometheus.yml' 
+      - '--storage.tsdb.path=/prometheus' 
+      - '--web.console.libraries=/etc/prometheus/console_libraries' 
+      - '--web.console.templates=/etc/prometheus/consoles' 
+      - '--web.enable-lifecycle' 
+    labels:
+      - "traefik.http.routers.prometheus.rule=(Host(`localhost`) && PathPrefix(`/prometheus`))" 
+      - "traefik.http.routers.prometheus.service=prometheus"
+      #- "traefik.http.routers.prometheus.middlewares=traefik-auth"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"  
+    ports: 
+      - 9090:9090 
+    networks: 
+      - monitoring 
+  grafana: 
+    image: grafana/grafana:latest 
+    #user: "501" 
+    container_name: grafana 
+    ports: 
+      - 3000:3000 
+    restart: unless-stopped 
+    volumes: 
+      - ~/promgrafnode/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources 
+      - ~/promgrafnode/grafana:/var/lib/grafana 
+    labels:
+       - "traefik.http.routers.grafana.rule=Host(grafana.localhost)" 
+       - "traefik.enable=true"
+       - "traefik.http.routers.grafana.service=grafana"
+      # - "traefik.http.routers.grafana.middlewares=traefik-auth"
+       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    networks: 
+      - monitoring
+    
+  cadvisor:
+    platform: linux/amd64
+    image: gcr.io/cadvisor/cadvisor
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - 8081:8080
+    networks:
+      - mon-net
+    restart: unless-stopped  
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks:
+      - monitoring
+    ports:
+    - 6379:6379    
+
+  traefik:
+    image: traefik:v2.9
+    command: 
+    #--api.insecure=true --providers.docker
+      - "--log.level=DEBUG"
+      - "--api.dashboard=true"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.buckets=0.1,0.3,1.2,5.0"
+      - "--providers.docker=true"
+      - "--providers.docker.watch"
+    labels:
+      - "traefik.http.routers.traefik-ui.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik-ui.service=api@internal"
+     # - "traefik.http.middlewares.traefik-auth.basicauth.users=test:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/,test2:$$apr1$$d9hr9HBB$$4HxwgUir3HP4EsggP/QNo0"
+     # - "traefik.http.middlewares.traefik-auth.basicauth.removeheader=true"
+     # - "traefik.http.routers.traefik-ui.middlewares=traefik-auth"      
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - monitoring  
+
+networks:
+  staj:
+  monitoring:
+  mon-net:
+  proxy:
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  monitoring:
+  mon-net:
+  
+
+
